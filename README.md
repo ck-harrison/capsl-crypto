@@ -59,7 +59,7 @@ app uses now. Some comments still describe the vetKD setup.
 | `src/envelope.ts` | The checks the server runs before it accepts a sealed capsule: the right factors in order, the time lock bound to the right drand round, capsl's share bound to this capsule |
 | `src/drandRound.ts` | The server's drand round arithmetic (tested against tlock-js) |
 | `src/password.ts` | Password verifiers. A password is a gate in front of capsl's share, never key material |
-| `src/capsuleClient.ts` | The browser side: which factors a capsule gets, sealing, and opening |
+| `src/capsuleClient.ts` | The browser side: which factors a capsule gets, sealing, and opening (copied from capsl's `frontend/src/utils/serverCapsule.ts`; capsl no longer uses the name `capsuleClient.ts`) |
 | `src/types.ts` | The stored envelope's shape |
 | `test/` | Tests, including cases marked `SHOULD FAIL` that try to open a capsule they must not |
 

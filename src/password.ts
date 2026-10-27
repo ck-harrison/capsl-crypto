@@ -20,6 +20,9 @@ export const CLOUDFLARE_PBKDF2_MAX = 100_000;
 const SALT_BYTES = 16;
 const HASH_BYTES = 32;
 export const PASSWORD_MAX = 200;
+// Security review 2026-10-27: a 1-character password on a public capsule fell
+// to the pooled guess limit in days. Eight is out of reach of any online rate.
+export const PASSWORD_MIN = 8;
 
 const b64 = (u: Uint8Array) => btoa(String.fromCharCode(...u));
 const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
