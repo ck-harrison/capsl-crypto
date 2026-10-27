@@ -29,8 +29,10 @@ invented here.
 | `release` | A random share capsl's server keeps, wrapped under a master key that is not in the database, and hands out only after the unlock time to whoever the capsule allows | capsl |
 | `link` | A secret carried in the part of the capsule's link after `#`, which browsers never send to a server | the person holding the link |
 
-Every capsule needs `time` and `release`, so opening one early means breaking
-drand **and** breaching capsl. A capsule can also require `link`: then capsl
+Every capsule with an unlock date needs `time` and `release`, so opening one
+early means breaking drand **and** breaching capsl. A capsule opened by password
+instead of a date has no `time` factor: capsl releases its share once the
+password matches, and the app says plainly that such a capsule has no time lock. A capsule can also require `link`: then capsl
 never has every piece, before or after the date, and a lost link means nobody
 can open it.
 
@@ -54,6 +56,10 @@ app uses now. Some comments still describe the vetKD setup.
 | `src/capsuleFormat.ts` | Format version and wrapped-key detection |
 | `src/drandTime.ts` | The drand `time` factor, including the choice of round |
 | `src/release.ts` | The server side of the `release` share: wrapping, and the rule for who may have it and when. There is no admin override |
+| `src/envelope.ts` | The checks the server runs before it accepts a sealed capsule: the right factors in order, the time lock bound to the right drand round, capsl's share bound to this capsule |
+| `src/drandRound.ts` | The server's drand round arithmetic (tested against tlock-js) |
+| `src/password.ts` | Password verifiers. A password is a gate in front of capsl's share, never key material |
+| `src/capsuleClient.ts` | The browser side: which factors a capsule gets, sealing, and opening |
 | `src/types.ts` | The stored envelope's shape |
 | `test/` | Tests, including cases marked `SHOULD FAIL` that try to open a capsule they must not |
 
