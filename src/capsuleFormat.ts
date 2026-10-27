@@ -70,7 +70,8 @@ export function hasCapsuleEnvelope(crypto?: CapsuleCrypto): boolean {
 /** How each factor kind is described to a person. */
 const FACTOR_LABELS: Record<string, string> = {
   time: 'a time lock',
-  link: 'its claim link',
+  release: "capsl's share",
+  link: 'its link',
   secret: 'a recovery phrase',
   recipient: "the recipient's key",
   group: 'a group of key holders',

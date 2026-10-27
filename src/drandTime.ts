@@ -6,8 +6,9 @@
  * unlock time, and nobody, capsl included, can decrypt it before drand publishes
  * that round.
  *
- * Browser-side code. It lives here for the phase 0 spike and moves to the
- * frontend in phase 2.
+ * Browser-side code, moved here from `server/src/` in phase 6. Loaded lazily
+ * (`serverCapsule.ts`'s `drandTimeLock`): tlock-js is large and a password
+ * capsule never needs it. The server's drand test imports this file.
  *
  * `mainnetClient()` pins quicknet's chain hash AND public key, so a relay cannot
  * feed a forged beacon: every beacon is BLS-verified against the pinned key.
