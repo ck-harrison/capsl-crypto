@@ -9,6 +9,7 @@
  */
 import {
   sealCapsule, openCapsule, linkSealer, linkOpener, timeSealer, timeOpener, generateLinkSecret,
+  wrapAttachmentKey, unwrapAttachmentKey,
   type FactorSealer, type FactorOpener,
 } from './capsuleEnvelope';
 import type { CapsuleCrypto } from './types';
@@ -58,14 +59,17 @@ export const drandTimeLock: TimeLock = {
   unwrap: () => async (ct, pk) => (await import('./drandTime')).drandUnwrap()(ct, pk),
 };
 
-/** Calls the API; the caller supplies auth (a cookie in tests, the browser's own in the app). */
-export type Api = (path: string, init?: { method?: string; body?: unknown }) => Promise<{ status: number; json: any }>;
+/**
+ * Calls the API; the caller supplies auth (a cookie in tests, the browser's own
+ * in the app). `raw` sends bytes instead of JSON, with `contentType`.
+ */
+export type Api = (path: string, init?: { method?: string; body?: unknown; raw?: Uint8Array; contentType?: string }) => Promise<{ status: number; json: any }>;
 
 export class CapsuleApiError extends Error {
   constructor(readonly status: number, message: string, readonly body?: unknown) { super(message); }
 }
 
-async function ok(api: Api, path: string, init?: { method?: string; body?: unknown }) {
+async function ok(api: Api, path: string, init?: Parameters<Api>[1]) {
   const r = await api(path, init);
   if (r.status < 200 || r.status > 299) throw new CapsuleApiError(r.status, r.json?.error ?? `HTTP ${r.status}`, r.json);
   return r.json;
@@ -94,7 +98,38 @@ export interface Created {
   capsuleKey: Uint8Array;
 }
 
-export async function createCapsule(api: Api, input: CreateInput, message: string, time: TimeLock = drandTimeLock): Promise<Created> {
+/**
+ * A file to seal into the capsule. `encrypt` turns the file into ciphertext
+ * parts under the AES key it is given: at most 64 MiB each, and every part but
+ * the last at least 5 MiB (R2's rule; a smaller one fails the upload). In the app that is
+ * the v3 chunked container (`frontend/src/utils/chunkedCrypto.ts`). The key is
+ * then wrapped under the capsule key, so the file needs exactly what the
+ * message needs to open.
+ */
+export interface FileToSeal {
+  filename: string;
+  contentType: string;
+  kind: 'stream' | 'buffered';
+  sizeBytes: number;
+  encrypt(aesKey: Uint8Array): Promise<Uint8Array[]>;
+}
+
+async function uploadFile(api: Api, capsuleId: string, capsuleKey: Uint8Array, f: FileToSeal) {
+  const aesKey = crypto.getRandomValues(new Uint8Array(32));
+  const parts = await f.encrypt(aesKey);
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const { key } = await ok(api, `/v1/capsules/${capsuleId}/attachments`, { method: 'POST', body: { kind: f.kind, maxBytes: total } });
+  const done: { partNumber: number; etag: string }[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    done.push(await ok(api, `/v1/uploads/${key}/parts/${i + 1}`, { method: 'PUT', raw: parts[i], contentType: 'application/octet-stream' }));
+  }
+  await ok(api, `/v1/uploads/${key}/complete`, { method: 'POST', body: done });
+  return { key, filename: f.filename, contentType: f.contentType, wrappedKey: b64(await wrapAttachmentKey(capsuleKey, aesKey)) };
+}
+
+export async function createCapsule(
+  api: Api, input: CreateInput, message: string, time: TimeLock = drandTimeLock, filesToSeal: FileToSeal[] = [],
+): Promise<Created> {
   const draft = await ok(api, '/v1/capsules', { method: 'POST', body: input });
   const factors: FactorSealer[] = [];
   if (draft.unlockMs !== null) factors.push(timeSealer(time.wrap(draft.unlockMs)));
@@ -102,16 +137,26 @@ export async function createCapsule(api: Api, input: CreateInput, message: strin
   const linkSecret = input.linkRequired ? generateLinkSecret() : null;
   if (linkSecret) factors.push(linkSealer(linkSecret));
 
+  // Seal first (locally), because each file's key is wrapped under the capsule
+  // key the seal produces; then upload; then hand the server both at once.
   const sealed = await sealCapsule(draft.capsuleId, message, factors);
-  await ok(api, `/v1/capsules/${draft.capsuleId}/seal`, { method: 'POST', body: { envelope: toStored(sealed.crypto) } });
+  const attachments = [];
+  for (const f of filesToSeal) attachments.push(await uploadFile(api, draft.capsuleId, sealed.capsuleKey, f));
+  await ok(api, `/v1/capsules/${draft.capsuleId}/seal`, { method: 'POST', body: { envelope: toStored(sealed.crypto), attachments } });
   return { capsuleId: draft.capsuleId, claimToken: draft.claimToken, linkSecret, capsuleKey: sealed.capsuleKey };
+}
+
+export interface OpenedAttachment {
+  key: string; filename: string; contentType: string; sizeBytes: number; kind: 'stream' | 'buffered';
+  /** The file's AES key, unwrapped under the capsule key. Decrypt the bytes from `/v1/files/:key` with it. */
+  aesKey: Uint8Array;
 }
 
 export class MissingLinkError extends Error {}
 
 export async function openCapsuleById(
   api: Api, capsuleId: string, opts: { password?: string; linkSecret?: Uint8Array | null; time?: TimeLock } = {},
-): Promise<{ plaintext: string; capsuleKey: Uint8Array }> {
+): Promise<{ plaintext: string; capsuleKey: Uint8Array; attachments: OpenedAttachment[] }> {
   const got = await ok(api, `/v1/capsules/${capsuleId}/open`, {
     method: 'POST', body: opts.password === undefined ? {} : { password: opts.password },
   });
@@ -127,5 +172,11 @@ export async function openCapsuleById(
     }
     throw new Error(`Unknown factor "${f.kind}".`);
   });
-  return openCapsule(capsuleId, envelope, openers);
+  const opened = await openCapsule(capsuleId, envelope, openers);
+  const attachments: OpenedAttachment[] = [];
+  for (const a of (got.attachments ?? []) as (Omit<OpenedAttachment, 'aesKey'> & { wrappedKey: string })[]) {
+    const { wrappedKey, ...rest } = a;
+    attachments.push({ ...rest, aesKey: await unwrapAttachmentKey(opened.capsuleKey, unb64(wrappedKey)) });
+  }
+  return { ...opened, attachments };
 }
