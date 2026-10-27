@@ -13,28 +13,17 @@
  * being edited after sealing; this check stops it being wrong from the start.
  */
 import { parseDrandBinding, roundForUnlockMs } from './drandRound';
+import { releaseBinding, type StoredEnvelope } from './storedEnvelope';
 
-/** Mirrors `CapsuleCrypto` in frontend/src/backend.ts, with bytes as base64. */
-export interface StoredEnvelope {
-  version: number;
-  factors: { kind: string; params: string }[];
-  layers: unknown[];
-  headerMac: string;
-  ciphertext: string;
-  commit: string;
-  ext: unknown[];
-}
+// The stored form and the release binding have ONE home, shared with the
+// browser that writes them.
+export { releaseBinding, type StoredEnvelope } from './storedEnvelope';
 
 export const ENVELOPE_VERSION = 1;
 /** Ciphertext bytes. A 50,000-character message is at most 200 KB of UTF-8 plus the tag. */
 export const MAX_CIPHERTEXT_BYTES = 200_100;
 
 const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
-
-/** The `release` factor's binding, so the header MAC covers which capsule capsl's share is for. */
-export function releaseBinding(capsuleId: string): Uint8Array {
-  return new TextEncoder().encode(`release:${capsuleId}`);
-}
 
 /** `params` is [u32 len][ciphertext][u32 len][publicKey], as written by `capsuleEnvelope.ts`. */
 export function splitParams(params: Uint8Array): { ciphertext: Uint8Array; publicKey: Uint8Array } | null {
