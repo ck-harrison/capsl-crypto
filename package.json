@@ -1,0 +1,30 @@
+{
+  "name": "capsl-crypto",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The encryption code of capsl (capsl.xyz), published so anyone can check it.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --project offline",
+    "test:drand": "vitest run --project drand",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "tlock-js": "0.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  },
+  "pnpm": {
+    "packageExtensions": {
+      "drand-client@1.2.5": {
+        "dependencies": {
+          "@noble/hashes": "1.8.0"
+        }
+      }
+    }
+  }
+}
