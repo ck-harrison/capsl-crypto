@@ -28,6 +28,17 @@ function splitParams(params: Uint8Array): { ciphertext: Uint8Array } {
   return { ciphertext: params.slice(4, 4 + len) };
 }
 
+describe("the server's copy of quicknet's constants (src/drandRound.ts)", () => {
+  it('matches tlock-js, and picks the same round as the browser for every moment tried', async () => {
+    const { QUICKNET, roundForUnlockMs, roundTimeMs } = await import('../src/drandRound');
+    expect(QUICKNET).toEqual({ hash: defaultChainInfo.hash, genesisMs: defaultChainInfo.genesis_time * 1000, periodMs: defaultChainInfo.period * 1000 });
+    for (let t = 1_800_000_000_000; t < 1_800_000_000_000 + 9_000; t += 137) {
+      expect(roundForUnlockMs(t)).toBe(roundForUnlock(t));
+      expect(roundTimeMs(roundForUnlockMs(t))).toBe(roundTime(defaultChainInfo, roundForUnlock(t)));
+    }
+  });
+});
+
 describe('roundForUnlock', () => {
   it('never picks a round published before the unlock time', () => {
     for (let t = 1_800_000_000_000; t < 1_800_000_000_000 + 7_000; t += 250) {
