@@ -48,12 +48,19 @@ export function expectedKinds(r: Pick<SealRules, 'unlockMode' | 'linkRequired'>)
   return [...(r.unlockMode === 'date' ? ['time'] : []), 'release', ...(r.linkRequired ? ['link'] : [])];
 }
 
+const ENVELOPE_KEYS = ['ciphertext', 'commit', 'ext', 'factors', 'headerMac', 'layers', 'version'];
+const FACTOR_KEYS = ['kind', 'params'];
+const sameKeys = (o: object, keys: string[]) => Object.keys(o).sort().join('|') === keys.join('|');
+
 const isB64 = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9+/]*={0,2}$/.test(v);
 
 /** Returns null when the envelope is acceptable, else the reason it is refused. */
 export function checkEnvelope(raw: unknown, r: SealRules): string | null {
   if (typeof raw !== 'object' || raw === null) return 'The envelope is missing.';
   const e = raw as Partial<StoredEnvelope>;
+  // Exactly the known fields: an extra one would be stored and returned by
+  // `open`, slipping past the ciphertext cap (security review 2026-10-27, finding 8).
+  if (!sameKeys(raw, ENVELOPE_KEYS)) return 'The envelope has unknown fields.';
   if (e.version !== ENVELOPE_VERSION) return `Envelope version must be ${ENVELOPE_VERSION}.`;
   if (!Array.isArray(e.factors) || !Array.isArray(e.layers) || !Array.isArray(e.ext)) return 'The envelope is malformed.';
   if (e.layers.length || e.ext.length) return 'This envelope uses features the server does not accept yet.';
@@ -68,6 +75,7 @@ export function checkEnvelope(raw: unknown, r: SealRules): string | null {
   if (got.join('|') !== want.join('|')) return `This capsule must be sealed with ${want.join(' + ')}; got ${got.join(' + ')}.`;
 
   for (const f of e.factors) {
+    if (!sameKeys(f, FACTOR_KEYS)) return 'The envelope has unknown fields.';
     if (!isB64(f.params)) return 'The envelope is malformed.';
     const p = splitParams(unb64(f.params));
     if (!p) return `The ${f.kind} factor is malformed.`;
