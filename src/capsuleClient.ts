@@ -83,6 +83,8 @@ export interface CreateInput {
   /** One of the creator's APPROVED custom shells (`GET /v1/shells`). */
   customShellId?: string;
   giftCredits?: number;
+  /** A public password capsule's reveal delay in ms (server's REVEAL_DELAYS_MS); the server defaults it to 24 h. */
+  revealDelayMs?: number;
 }
 
 export interface Created {

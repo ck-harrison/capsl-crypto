@@ -23,6 +23,16 @@ export interface ReleaseRow {
   unlock_ms: number;
   /** PBKDF2 verifier from `password.ts`, or null when the capsule has no password. */
   password_verifier: string | null;
+  /**
+   * The public reveal delay: how long after the first password open (by anyone
+   * but the owner) a PUBLIC password capsule opens without its password. Null
+   * when there is none: every capsule that is not public-with-a-password, and
+   * every one created before 0013. Bound into the wrap when set.
+   */
+  reveal_delay_ms?: number | null;
+  /** When the first non-owner opened it with the password, and the server's MAC over that. */
+  password_opened_ms?: number | null;
+  password_opened_mac?: string | null;
 }
 
 /** Who is asking. `email` only when the sign-in provider verified it. */
@@ -52,12 +62,59 @@ async function wrapKey(masterB64: string | undefined): Promise<CryptoKey> {
   );
 }
 
-/** Everything a row's share is bound to. Changing any of it breaks the unwrap. */
+/**
+ * Everything a row's share is bound to. Changing any of it breaks the unwrap.
+ * A row with a reveal delay binds it too (v3); a row without one keeps the v2
+ * data exactly, so every share wrapped before 0013 still unwraps.
+ */
 export function boundData(row: ReleaseRow): Uint8Array {
-  return enc.encode(JSON.stringify([
-    'capsl/release/v2', row.capsule_id, row.owner_id, row.recipient_id, row.recipient_email,
-    row.policy, row.unlock_ms, row.password_verifier,
-  ]));
+  const v2 = [row.capsule_id, row.owner_id, row.recipient_id, row.recipient_email, row.policy, row.unlock_ms, row.password_verifier];
+  return enc.encode(JSON.stringify(row.reveal_delay_ms == null
+    ? ['capsl/release/v2', ...v2]
+    : ['capsl/release/v3', ...v2, row.reveal_delay_ms]));
+}
+
+async function openedKey(masterB64: string | undefined): Promise<CryptoKey> {
+  const base = await crypto.subtle.importKey('raw', decodeMasterKey(masterB64) as BufferSource, 'HKDF', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: enc.encode('capsl/release/opened/v1') },
+    base,
+    { name: 'HMAC', hash: 'SHA-256', length: 256 },
+    false,
+    ['sign', 'verify'],
+  );
+}
+const openedData = (row: ReleaseRow, openedMs: number) =>
+  enc.encode(JSON.stringify(['capsl/release/opened/v1', row.capsule_id, openedMs, row.reveal_delay_ms ?? null]));
+
+/**
+ * The MAC that makes `password_opened_ms` trustworthy. The time of the first
+ * password open decides when a public capsule stops asking for its password, so
+ * somebody who can write the database must not be able to backdate it: without
+ * the master key they cannot produce this.
+ */
+export async function openedMac(masterB64: string | undefined, row: ReleaseRow, openedMs: number): Promise<string> {
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', await openedKey(masterB64), openedData(row, openedMs) as BufferSource));
+  return btoa(String.fromCharCode(...sig));
+}
+
+/** The first password open's time, if one is recorded AND its MAC verifies; otherwise null. */
+export async function verifiedOpenedMs(masterB64: string | undefined, row: ReleaseRow): Promise<number | null> {
+  if (row.password_opened_ms == null || !row.password_opened_mac) return null;
+  let sig: Uint8Array;
+  try { sig = Uint8Array.from(atob(row.password_opened_mac), (ch) => ch.charCodeAt(0)); } catch { return null; }
+  const ok = await crypto.subtle.verify('HMAC', await openedKey(masterB64), sig as BufferSource, openedData(row, row.password_opened_ms) as BufferSource);
+  return ok ? row.password_opened_ms : null;
+}
+
+/**
+ * Whether a public password capsule has passed its reveal delay: someone other
+ * than the owner opened it with the password (`openedMs`, already verified) and
+ * the delay has run. Pure.
+ */
+export function passwordWaived(row: ReleaseRow, openedMs: number | null, nowMs: number): boolean {
+  return row.policy === 'public' && row.password_verifier !== null && row.reveal_delay_ms != null
+    && openedMs !== null && nowMs >= openedMs + row.reveal_delay_ms;
 }
 
 export async function wrapShare(masterB64: string | undefined, row: ReleaseRow, share: Uint8Array): Promise<Uint8Array> {
@@ -103,7 +160,9 @@ export type ReleaseDecision =
  * There is deliberately NO admin or support override: no sign-in method, staff
  * member or admin can take a share outside its policy (OFF-ICP-PLAN §3.2).
  */
-export function mayRelease(row: ReleaseRow, caller: Caller | null, nowMs: number, passwordMatched = false): ReleaseDecision {
+export function mayRelease(
+  row: ReleaseRow, caller: Caller | null, nowMs: number, passwordMatched = false, openedMs: number | null = null,
+): ReleaseDecision {
   if (nowMs < row.unlock_ms) return { ok: false, status: 425, reason: 'Still locked.' };
   if (row.policy === 'parties') {
     const isParty = caller !== null && (
@@ -117,6 +176,8 @@ export function mayRelease(row: ReleaseRow, caller: Caller | null, nowMs: number
         : { ok: false, status: 403, reason: 'Only the sender and the recipient can open this capsule.' };
     }
   }
-  if (row.password_verifier !== null && !passwordMatched) return { ok: false, status: 403, reason: 'Wrong password.' };
+  if (row.password_verifier !== null && !passwordMatched && !passwordWaived(row, openedMs, nowMs)) {
+    return { ok: false, status: 403, reason: 'Wrong password.' };
+  }
   return { ok: true };
 }
